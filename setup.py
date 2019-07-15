@@ -10,7 +10,7 @@ install_reqs = parse_requirements('requirements.txt', session='work')
 reqs = [str(ir.req) for ir in install_reqs]
 
 this_directory = path.abspath(path.dirname(__file__))
-with open(path.join(this_directory, 'readme.md'), encoding='utf-8') as f:
+with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
 setuptools.setup(
@@ -23,8 +23,12 @@ setuptools.setup(
     url="https://github.com/audriusrudalevicius/download-util",
     package_dir={'': 'src'},
     packages=setuptools.find_packages('src'),
+    provides=['downloader'],
+    entry_points={'console_scripts': ['downloader=downloader.command_line:main'], },
     install_requires=reqs,
     include_package_data=True,
+    python_requires='>3.6.*',
+    platforms=['any'],
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License"

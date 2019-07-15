@@ -1,11 +1,9 @@
-from __future__ import print_function
-import concurrent
-import hashlib
-import os
-import sys
-import time
-import re
 import functools
+import hashlib
+import logging
+import os
+import re
+import time
 from concurrent.futures import ThreadPoolExecutor, _base
 from contextlib import closing
 from urllib.parse import urlparse
@@ -13,9 +11,9 @@ from urllib.parse import urlparse
 import requests
 from tqdm import tqdm
 
+__all__ = ["Downloader"]
 
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+log = logging.getLogger("downloader")
 
 
 class SingleThreadPoolExecutor(ThreadPoolExecutor):
@@ -51,6 +49,7 @@ class Downloader:
         try:
             with requests.get(url, stream=True) as response:
                 if response.ok is not True:
+                    log.debug('Non OK Response: %s', response.status_code)
                     return
                 expected_size = int(response.headers.get('Content-Length'))
                 try:
@@ -60,9 +59,10 @@ class Downloader:
                         fname = url.split("/")[-1]
                 except:
                     fname = None
-                if os.path.exists(destination):
+                if os.path.exists(destination) and expected_size is not None:
                     existing = os.path.getsize(destination)
                     if existing == expected_size:
+                        log.debug('File already exists on disk with same size "%s"', destination)
                         return url, destination, fname, None
                 with closing(response), open(destination, 'wb') as file:
                     for chunk in response.iter_content(chunk_size):
@@ -70,6 +70,7 @@ class Downloader:
                             file.write(chunk)
                 downloaded_size = os.path.getsize(destination)
                 if downloaded_size < expected_size or expected_size < 1:
+                    log.debug('Removing old incomplete file "%s"', destination)
                     os.remove(destination)
                     return
                 return url, destination, fname, None
@@ -84,34 +85,36 @@ class Downloader:
         _try = 0
         while _try < max_retry:
             _try = _try + 1
+            log.debug('Downloading "%s" in %d try', url, _try)
             result = Downloader._transfer(url, destination, chunk_size)
             if result is not None:
                 if result[3] is not None:
-                    eprint('Download error "{}" ({}/{}) {}'.format(url, _try, max_retry, result[3]))
+                    log.warning('Download error "%s" (%d/%d) %s', url, _try, max_retry, result[3])
                     if _try >= max_retry:
                         if callback is not None:
                             callback()
                         return result
                     continue
-                if callback is not None:
-                    callback()
-                return result
-            time.sleep(2 ** _try)
+                else:
+                    log.debug('Download complete "%s" in %d try', url, _try)
+                    if callback is not None:
+                        callback()
+                    return result
+            sleep_time = 2 ** _try
+            log.debug('Wait for %d seconds', sleep_time)
+            time.sleep(sleep_time)
+        log.debug('Download failed "%s" in %d try', url, _try)
         if callback is not None:
             callback()
 
-    def download_batch(self, urls):
-        source = list(map(lambda url: (url, mk_dest_path(url, self._destination_path)), urls))
+    def download_batch(self, urls, stream=False):
+        log.info('Preparing download list')
+        if stream is False:
+            source = list(map(lambda url: (url, mk_dest_path(url, self._destination_path)), urls))
+        else:
+            source = map(lambda url: (url, mk_dest_path(url, self._destination_path)), urls)
         t = tqdm(total=len(source))
         return self._pool.map(functools.partial(self._download, callback=t.update), source, chunksize=len(source))
-
-
-def tqdm_parallel_map(executor, fn, *iterables, **kwargs):
-    futures_list = []
-    for iterable in iterables:
-        futures_list += [executor.submit(fn, i) for i in iterable]
-    for f in tqdm(concurrent.futures.as_completed(futures_list), total=len(futures_list), **kwargs):
-        yield f.result()
 
 
 def mk_dest_path(url, destination_path):

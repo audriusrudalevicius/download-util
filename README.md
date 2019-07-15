@@ -8,7 +8,7 @@ bin/downloader ./download.list ~/Downloads > downloads.out.list
 ## Install with pip
 
 ```sh
-pip3 install git+https://github.com/audriusrudalevicius/download-util
+pip3 install --upgrade git+https://github.com/audriusrudalevicius/download-util
 ```
 
 ## Dev setup
