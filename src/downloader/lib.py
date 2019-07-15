@@ -1,17 +1,21 @@
-#!/usr/bin/env python3
-
+from __future__ import print_function
 import concurrent
-import csv
 import hashlib
 import os
 import sys
 import time
+import re
+import functools
 from concurrent.futures import ThreadPoolExecutor, _base
 from contextlib import closing
 from urllib.parse import urlparse
 
 import requests
 from tqdm import tqdm
+
+
+def eprint(*args, **kwargs):
+    print(*args, file=sys.stderr, **kwargs)
 
 
 class SingleThreadPoolExecutor(ThreadPoolExecutor):
@@ -40,6 +44,7 @@ class Downloader:
     def __init__(self, download_to, parallel_count):
         self._pool = SingleThreadPoolExecutor(parallel_count, 'DownloaderPool')
         self._destination_path = download_to
+        self.real_names_map = {}
 
     @staticmethod
     def _transfer(url, destination, chunk_size):
@@ -48,10 +53,17 @@ class Downloader:
                 if response.ok is not True:
                     return
                 expected_size = int(response.headers.get('Content-Length'))
+                try:
+                    if "Content-Disposition" in response.headers.keys():
+                        fname = re.findall("filename=(.+)", response.headers["Content-Disposition"])[0]
+                    else:
+                        fname = url.split("/")[-1]
+                except:
+                    fname = None
                 if os.path.exists(destination):
                     existing = os.path.getsize(destination)
                     if existing == expected_size:
-                        return destination
+                        return url, destination, fname, None
                 with closing(response), open(destination, 'wb') as file:
                     for chunk in response.iter_content(chunk_size):
                         if chunk:
@@ -60,29 +72,38 @@ class Downloader:
                 if downloaded_size < expected_size or expected_size < 1:
                     os.remove(destination)
                     return
-                return destination
-        except BaseException:
-            return
+                return url, destination, fname, None
+        except BaseException as e:
+            return None, None, None, e
 
     @staticmethod
-    def _download(item):
-        max_retry = 5
+    def _download(item, callback=None):
+        max_retry = 7
         chunk_size = 1 << 15
         url, destination = item
         _try = 0
         while _try < max_retry:
-            if _try > 0:
-                print('Retrying to download {} to {} ({}/{})'.format(url, destination, _try, max_retry))
             _try = _try + 1
             result = Downloader._transfer(url, destination, chunk_size)
             if result is not None:
+                if result[3] is not None:
+                    eprint('Download error "{}" ({}/{}) {}'.format(url, _try, max_retry, result[3]))
+                    if _try >= max_retry:
+                        if callback is not None:
+                            callback()
+                        return result
+                    continue
+                if callback is not None:
+                    callback()
                 return result
-            time.sleep(1 * _try)
+            time.sleep(2 ** _try)
+        if callback is not None:
+            callback()
 
     def download_batch(self, urls):
-        # return self._pool.map(self._download, )
         source = list(map(lambda url: (url, mk_dest_path(url, self._destination_path)), urls))
-        return tqdm_parallel_map(self._pool, self._download, source)
+        t = tqdm(total=len(source))
+        return self._pool.map(functools.partial(self._download, callback=t.update), source, chunksize=len(source))
 
 
 def tqdm_parallel_map(executor, fn, *iterables, **kwargs):
@@ -102,18 +123,3 @@ def mk_dest_path(url, destination_path):
         fn = url_hash
 
     return destination_path + '/' + fn
-
-
-if len(sys.argv) < 2:
-    raise Exception('Downloads file and download dir required')
-
-threads_count = int(sys.argv[3]) if len(sys.argv) == 4 else 20
-download_to = os.path.realpath(sys.argv[2])
-downloads_file = os.path.realpath(sys.argv[1])
-
-downloader = Downloader(download_to, 20)
-with open(downloads_file, mode='r') as infile:
-    reader = csv.reader(infile)
-    for i in downloader.download_batch(map(lambda columns: columns[0], reader)):
-        pass
-
