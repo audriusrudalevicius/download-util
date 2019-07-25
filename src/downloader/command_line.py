@@ -11,12 +11,6 @@ def filter_empty(line):
     return line is not None
 
 
-def parse_csv(columns):
-    if len(columns) < 1:
-        return None
-    return columns[0]
-
-
 def main(fp=sys.stdout, argv=None):
     if argv is None:
         argv = sys.argv[1:]
@@ -25,8 +19,14 @@ def main(fp=sys.stdout, argv=None):
     parser.add_argument('source', type=str)
     parser.add_argument('destination', type=str)
     parser.add_argument('--threads', type=int, default=20)
+    parser.add_argument('--column', type=int, default=0)
     parser.add_argument('--log', type=str, default='INFO')
     args = parser.parse_args(argv)
+
+    def parse_csv(columns):
+        if len(columns) < 1:
+            return None
+        return columns[args.column]
 
     is_stream = args.source.lower() is 'stdin'
     threads_count = args.threads
